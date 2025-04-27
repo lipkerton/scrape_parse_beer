@@ -19,4 +19,4 @@ playwright install
 ```PowerShell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned
 ```
-После снятия запрета просто повторите в папке проекта команду `.\venv\Scripts\Activate` и все дальнейшие действия.
+После снятия запрета просто повторите в папке проекта команду `.\venv\Scripts\activate` и все дальнейшие действия.
