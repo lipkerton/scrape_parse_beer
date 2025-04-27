@@ -1,19 +1,19 @@
 ## beer scraper
 ### Установка
 Чтобы запустить проект нужно:
-- развернуть виртуальное окружение
+1) развернуть виртуальное окружение
 ```Bash
 python -m venv .venv
 ```
-- активировать виртуальное окружение
+2) активировать виртуальное окружение
 ```Bash
 source .venv/bin/activate
 ```
-- установить зависимости
+3) установить зависимости
 ```Bash
 python -m pip install -r requirements.txt
 ```
-- установить драйвера scrapy-playwright
+4) установить драйвера scrapy-playwright
 ```Bash
 playwright install
 ```
