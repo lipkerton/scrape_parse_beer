@@ -1,51 +1,86 @@
-import scrapy
-import json
+'''Модуль, где содержится код пауков.'''
 import time
-import logging
-from scrapy.utils.log import configure_logging 
+import random
+
+import scrapy
 from scrapy_playwright.page import PageMethod
 
-from ..constants import START_LINKS
-from ..items import LinkParserItem, PriceItem, StockItem, AssetsItem, MetadataItem
+from ..items import LinkParserItem
+from ..methods import cut_spaces, get_links_from_input_json, init_logging
+from ..settings import USER_AGENTS, STEP, KRASNODAR_COOKIE
 
 
 class LinkSpider(scrapy.Spider):
-    # имя паука.
-    name = 'link_spider'
+    '''Получаем json с стартовыми ссылками,
+    проходимся по ним, открываем личные страницы
+    каждого пива, вытаскиваем информацию с личных страниц.'''
 
-    # логи.
-    configure_logging(install_root_handler=False)
-    logging.basicConfig(
-        filename='log.log',
-        format='%(levelname)s: %(message)s',
-        level=logging.INFO
-    )
-
+    name = 'link_spider'  # имя паука.
+    init_logging()  # логи.
     # достаем ссылки из json.
-    with open(START_LINKS) as file:
-        links = json.load(file)
+    links = get_links_from_input_json()
 
     def start_requests(self):
         '''Запускаем цикл по стартовым ссылкам.'''
-        for name, url in self.links.items():
+        for _, url in self.links.items():
             yield scrapy.Request(
                 url=url,
+                cookies={
+                    "alkoteka_locality": KRASNODAR_COOKIE
+                },
                 meta=dict(
                     playwright=True,
                     playwright_include_page=True,
                     playwright_page_methods=[
-                        PageMethod('wait_for_selector', 'div.card-product')
-                    ],
+                        # PageMethod('wait_for_selector', 'div.card-product')
+                        PageMethod('wait_for_selector', 'div.catalog__list')
+                        ],
                     errback=self.errback
-                ),
-                callback=self.parse_main_links)
+                    ),
+                callback=self.parse_main_links,
+                headers={
+                    "User-Agent": USER_AGENTS[random.randint(0, len(USER_AGENTS)-1)]
+                }
+            )
+
 
     async def parse_main_links(self, response):
         '''Получаем ссылку из списка ссылок и парсим ее,
         чтобы найти ссылки на страницы пива.'''
-        beer_links = self.get_links(response)
+
+        beer_total_number = int(response.xpath(
+            '//p[@class="catalog-amount text text--body-sm"]/text()'
+        ).get().split()[1])
         page = response.meta["playwright_page"]
+        beer_links = self.get_links(response)
+
+        for _ in range(0, beer_total_number, STEP):
+            # если просто крутить мышкой, то нужно крутить по 10 пикселей
+            # в цикле - это очень долго, а если крутить сразу по 100+ пикселей,
+            # то есть огромный шанс вылететь в footer и тогда ничего уже крутиться
+            # не будет, поэтому нужно вычесть футер из размера страницы и скроллить
+            # по результату.
+            await page.evaluate(
+                '''() => {
+                    const footer = document.querySelector('footer');
+                    const footerHeight = footer.offsetHeight;
+                    window.scrollTo({
+                        top: document.body.scrollHeight - footerHeight - 100,
+                        behavior: 'smooth'
+                    });
+                };'''
+            )
+            await page.wait_for_timeout(1000)
+            current_scroll = await page.evaluate("window.pageYOffset")
+            print(f"Текущая позиция скролла: {current_scroll}")
+
+        html = await page.content()
+        scrolled_page = scrapy.Selector(text=html)
+        beer_links = self.get_links(scrolled_page)
         await page.close()
+
+        print(len(beer_links))
+        print(*beer_links, sep='\n')
 
         for link in beer_links:
             yield scrapy.Request(
@@ -56,27 +91,33 @@ class LinkSpider(scrapy.Spider):
                     playwright_headless = False,
                     playwright_page_methods=[
                         PageMethod('wait_for_selector', 'section.product'),
+                        # эта строчка нужна, чтобы нажать на свич на странице,
+                        # я пытался разными методами, но получается только так.
                         PageMethod(
                             'evaluate',
-                            '''() => {document.querySelector('div.switch__wrap > button').click();}'''
+                            '''() =>
+                            {document.querySelector('div.switch__wrap > button').click();
+                            }'''
                         )
                     ],
                     errback=self.errback
-                    
                 ),
-                callback=self.parse_beer_link
+                callback=self.parse_beer_link,
+                headers={
+                    "User-Agent": USER_AGENTS[random.randint(0, len(USER_AGENTS)-1)]
+                }
             )
-    
+
     def get_links(self, response) -> list:
         '''Получаем все ссылки из категории.'''
         beer_links = response.xpath(
             '//div[@class="catalog__content"]'
             '/div[3][@class="catalog__list"]'
-            '/div[@class="card-product"]'
+            '//div[@class="card-product"]'
             '/a[1]/@href'
         ).getall()
         return beer_links
-    
+
     def __get_title(self, response):
         '''Достаем название пива,
         если есть объем достаем и его,
@@ -117,8 +158,7 @@ class LinkSpider(scrapy.Spider):
         ).get()
         if result:
             return result.split()[1]
-        
-    
+
     def __get_marketing_tags(self, response):
         return response.xpath(
             '//div[@class="product-card-wrap"]'
@@ -126,14 +166,12 @@ class LinkSpider(scrapy.Spider):
             '/div[@class="product-card__tags"]'
             '//p/text()'
         ).getall()
-    
+
     def __get_brand(self, response):
-        brand = response.xpath(
+        brand = cut_spaces(response.xpath(
             '//div[span[contains(., "Производитель")]]'
             '/div/p/text()'
-        ).get()
-        if brand:
-            brand = brand.strip()
+        ).get())
         return brand
 
     def __get_section(self, response):
@@ -141,123 +179,114 @@ class LinkSpider(scrapy.Spider):
             '//div[@class="breadcrumbs"]'
             '//p[@class="text text--body-sm text--black"]/text()'
         ).getall()[1:-1]
-    
+
     def __get_price(self, response) -> dict:
-        current = response.xpath(
+        current_price = response.xpath(
             '//div[@class="button-count button-count--dark product-card__price-button"]'
             '/p/span/text()'
         ).get()
-        original = response.xpath(
+        original_price = response.xpath(
             '//div[@class="button-count button-count--dark product-card__price-button"]'
             '/p/text()'
         ).get()
-        sale_tag = response.xpath(
+        sale_tag_price = response.xpath(
             '//div[@class="cart-card__price cart-card__sale-price"]'
             '/div/span/text()'
         ).get()
 
-        if sale_tag:
-            sale_tag = sale_tag.lstrip('-')
+        if sale_tag_price:
+            sale_tag_price = sale_tag_price.lstrip('-')
 
+        # нужно заменить запятые и убрать символы юникода
+        # для перевода в float.
+        current_price = float(current_price.replace(',', ''))
+        original_price = float(original_price.replace(',', '').split('\xa0')[0])
 
-        current = float(current.replace(',', ''))
-        original = float(original.split('\xa0')[0])
+        return dict(
+            current = current_price,
+            original = original_price,
+            sale_tag = f'Скидка {sale_tag_price}'
+        )
 
-        price_item = PriceItem()
-        
-        price_item['current'] = current
-        # здесь почти во всех случаях есть символ из юникода,
-        # который означает пробел - поэтому я меняю этот символ на пробел.
-        price_item['original'] = original
-        price_item['sale_tag'] = f'Скидка {sale_tag}'
-
-        return price_item
-    
     def __get_stock(self, response):
+        '''Для этой функции нужно было переключить кнопку:
+        Нужно было открыть список всех магазинов вместо карты
+        и посчитать сумму всех их товаров.'''
         beer_number = response.xpath(
             '//div[@class="product__list"]'
             '//p[@class="text text--body-sm card-map__quantity text--black"]/text()'
         ).getall()
-        stock_item = StockItem()
-        stock_item['in_stock'] = beer_number and True
-        stock_item['count'] = sum(map(lambda x: int(x.split('\xa0')[0]), beer_number))
-        return stock_item
-    
-    def __get_assets(self, response):
-        main_image = response.xpath('//div[@class="product-info__hero-img-wrap"]/img[1]/@src').get()
-        any_other_images = response.xpath('//div[@class="product-info__item product-info__hero"]//img/@src').getall()
-        assets_item = AssetsItem()
-        assets_item['main_image'] = main_image
-        assets_item['set_images'] = any_other_images
-        # я не думаю, что там есть 360 фотки и видео пива.
-        assets_item['view360'] = []
-        assets_item['video'] = []
 
-        return assets_item
-    
-    def __get_metadata(self, response):
-        volume = response.xpath(
-            '//div[span[contains(., "Крепость")]]'
-            "/div/p/text()"
+        return dict(
+            in_stock = beer_number and True,
+            count = sum(map(lambda x: int(x.split('\xa0')[0]), beer_number))
+        )
+
+    def __get_assets(self, response):
+        '''Достаем всю медиа со страницы.'''
+        main_image_asset = response.xpath(
+            '//div[@class="product-info__hero-img-wrap"]/img[1]/@src'
         ).get()
-        strength = response.xpath(
+        any_other_images_asset = response.xpath(
+            '//div[@class="product-info__item product-info__hero"]//img/@src'
+        ).getall()
+
+        return dict(
+            main_image = main_image_asset,
+            set_images = any_other_images_asset,
+            view360 = [],
+            video = []
+        )
+
+    def __get_metadata(self, response):
+        volume_meta = cut_spaces(response.xpath(
             '//div[span[contains(., "Объем")]]'
             '/div/p/text()'
-        ).get()
-        color = response.xpath(
+        ).get())
+        strength_meta = cut_spaces(response.xpath(
+            '//div[span[contains(., "Крепость")]]'
+            "/div/p/text()"
+        ).get())
+        color_meta = cut_spaces(response.xpath(
             '//div[span[contains(., "Цвет")]]'
             '/div/p/text()'
-        ).get()
-        temperature = response.xpath(
+        ).get())
+        temperature_meta = cut_spaces(response.xpath(
             '//div[span[contains(., "Температура подачи")]]'
             '/div/p/text()'
-        ).get()
-        country = response.xpath(
+        ).get())
+        country_meta = cut_spaces(response.xpath(
             '//div[span[contains(., "Страна")]]'
             '/div/p/text()'
-        ).get()
-        english_name = response.xpath(
+        ).get())
+        english_name_meta = cut_spaces(response.xpath(
             '//div[@class="product-card__header"]/div[1]/p/text()'
-        ).get()
-        producer = response.xpath(
+        ).get())
+        producer_meta = cut_spaces(response.xpath(
             '//div[span[contains(., "Производитель")]]'
-            '/div/p/text()'
-        )
-        type = response.xpath(
-            '//div[span[contains(., "Вид")]]'
-            '/div/p/text()'
-        )
-        description = response.xpath(
+            '/div[1]/p[1]/text()'
+        ).get())
+        type_meta = cut_spaces(response.xpath(
+            '//div[span[text() = "Вид"]]'
+            '/div[1]/p[1]/text()'
+        ).get())
+        description_meta = response.xpath(
             '//p[@class="product-info__description-text"]/text()'
         ).get()
-        RPC = self.__get_rpc(response)
-        
-        # metadata_item = MetadataItem()
-        # metadata_item['__description'] = description
-        # metadata_item['type'] = type
-        # metadata_item['producer'] = producer
-        # metadata_item['english_name'] = english_name
-        # metadata_item['volume'] = volume
-        # metadata_item['color'] = color
-        # metadata_item['RPC'] = RPC
-        # metadata_item['temperature'] = temperature
-        # metadata_item['strength'] = strength
-        # metadata_item['country'] = country
 
-        # result = {
-        #     __description = description
-        #     type = type
-        #     metadata_item['producer'] = producer
-        #     metadata_item['english_name'] = english_name
-        #     metadata_item['volume'] = volume
-        #     metadata_item['color'] = color
-        #     metadata_item['RPC'] = RPC
-        #     metadata_item['temperature'] = temperature
-        #     metadata_item['strength'] = strength
-        #     metadata_item['country'] = country
-        # }
-
-        # return metadata_item
+        result = dict(
+            __description = description_meta,
+            type = type_meta,
+            producer = producer_meta,
+            english_name = english_name_meta,
+            volume = volume_meta,
+            color = color_meta,
+            RPC = self.__get_rpc(response),
+            temperature = temperature_meta,
+            strength = strength_meta,
+            country = country_meta
+        )
+        return result
 
 
 
@@ -265,7 +294,7 @@ class LinkSpider(scrapy.Spider):
         '''Получаем страницу пива
          и начинаем вытаскивать из нее данные.'''
         page = response.meta["playwright_page"]
-        
+
         beer_item = LinkParserItem()
 
         beer_item['timestamp'] = time.time()
@@ -279,23 +308,17 @@ class LinkSpider(scrapy.Spider):
         beer_item['stock'] = self.__get_stock(response)
         beer_item['assets'] = self.__get_assets(response)
         beer_item['metadata'] = self.__get_metadata(response)
+        # много путешествовал по сайту, но не выидел карточек
+        # c разными пивными вариантами, поэтому пусть будет 1.
+        beer_item['variants'] = 1
+
+        await page.wait_for_timeout(random.randint(1000, 3000))
         await page.close()
 
         yield beer_item
 
     async def errback(self, failure):
+        '''Закрываем страницу экстренно,  
+        чтобы не потерять память.'''
         page = failure.request.meta["playwright_page"]
         await page.close()
-    
-
-
-
-
-        
-
-
-
-
-
-
-

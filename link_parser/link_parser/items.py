@@ -1,38 +1,12 @@
+'''Модуль, в котором описаны объекты.
+Эти объекты помогают данным превратиться в
+формат json на выходе.'''
 import scrapy
 
 
-# class MetadataItem(scrapy.Item):
-#     __description = scrapy.Field()
-#     RPC = scrapy.Field()
-#     type = scrapy.Field()
-#     color = scrapy.Field()
-#     producer = scrapy.Field()
-#     volume = scrapy.Field()
-#     english_name = scrapy.Field()
-#     country = scrapy.Field()
-#     temperature = scrapy.Field()
-
-    
-
-class AssetsItem(scrapy.Item):
-    main_image = scrapy.Field()
-    set_images = scrapy.Field()
-    view360 = scrapy.Field()
-    video = scrapy.Field()
-
-
-class StockItem(scrapy.Item):
-    in_stock = scrapy.Field()
-    count = scrapy.Field(serializer=list)
-
-
-class PriceItem(scrapy.Item):
-    current = scrapy.Field()
-    original = scrapy.Field()
-    sale_tag = scrapy.Field()
-
-
 class LinkParserItem(scrapy.Item):
+    '''Делаем класс, в который будем
+    запаковывать информацию о пиве.'''
     timestamp = scrapy.Field()
     RPC = scrapy.Field()
     url = scrapy.Field()
@@ -44,5 +18,4 @@ class LinkParserItem(scrapy.Item):
     stock = scrapy.Field()
     assets = scrapy.Field()
     metadata = scrapy.Field()
-
-
+    variants = scrapy.Field()
