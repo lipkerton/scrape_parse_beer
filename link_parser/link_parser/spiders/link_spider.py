@@ -1,13 +1,17 @@
 '''Модуль, где содержится код пауков.'''
-import time
 import random
+import time
+import typing
 
 import scrapy
+import scrapy.http
+import scrapy.http.response
+import scrapy.http.response.html
 from scrapy_playwright.page import PageMethod
 
 from ..items import LinkParserItem
 from ..methods import cut_spaces, get_links_from_input_json, init_logging
-from ..settings import USER_AGENTS, STEP, KRASNODAR_COOKIE
+from ..settings import KRASNODAR_COOKIE, STEP, USER_AGENTS
 
 
 class LinkSpider(scrapy.Spider):
@@ -20,7 +24,9 @@ class LinkSpider(scrapy.Spider):
     # достаем ссылки из json.
     links = get_links_from_input_json()
 
-    def start_requests(self):
+    def start_requests(
+            self
+    ) -> typing.Generator[scrapy.http.response.html.HtmlResponse]:
         '''Запускаем цикл по стартовым ссылкам.'''
         for _, url in self.links.items():
             yield scrapy.Request(
@@ -44,7 +50,9 @@ class LinkSpider(scrapy.Spider):
             )
 
 
-    async def parse_main_links(self, response):
+    async def parse_main_links(
+            self, response: scrapy.http.response.html.HtmlResponse
+    ) -> typing.AsyncGenerator[scrapy.http.response.html.HtmlResponse]:
         '''Получаем ссылку из списка ссылок и парсим ее,
         чтобы найти ссылки на страницы пива.'''
 
@@ -79,9 +87,6 @@ class LinkSpider(scrapy.Spider):
         beer_links = self.get_links(scrolled_page)
         await page.close()
 
-        print(len(beer_links))
-        print(*beer_links, sep='\n')
-
         for link in beer_links:
             yield scrapy.Request(
                 url=link,
@@ -108,7 +113,7 @@ class LinkSpider(scrapy.Spider):
                 }
             )
 
-    def get_links(self, response) -> list:
+    def get_links(self, response:scrapy.http.response.html.HtmlResponse) -> list[str]:
         '''Получаем все ссылки из категории.'''
         beer_links = response.xpath(
             '//div[@class="catalog__content"]'
@@ -118,7 +123,7 @@ class LinkSpider(scrapy.Spider):
         ).getall()
         return beer_links
 
-    def __get_title(self, response):
+    def __get_title(self, response:scrapy.http.response.html.HtmlResponse) -> str:
         '''Достаем название пива,
         если есть объем достаем и его,
         если есть крепость достаем и ее.'''
@@ -150,7 +155,9 @@ class LinkSpider(scrapy.Spider):
             return result
         return title
 
-    def __get_rpc(self, response):
+    def __get_rpc(
+        self, response:scrapy.http.response.html.HtmlResponse
+    ) -> str:
         '''Достаем уникальный номер.'''
         result = response.xpath(
             '//div[@class="product-card__header"]'
@@ -159,7 +166,9 @@ class LinkSpider(scrapy.Spider):
         if result:
             return result.split()[1]
 
-    def __get_marketing_tags(self, response):
+    def __get_marketing_tags(
+        self, response:scrapy.http.response.html.HtmlResponse
+    ) -> str:
         return response.xpath(
             '//div[@class="product-card-wrap"]'
             '/div[@class="product-card"]'
@@ -167,20 +176,26 @@ class LinkSpider(scrapy.Spider):
             '//p/text()'
         ).getall()
 
-    def __get_brand(self, response):
+    def __get_brand(
+        self, response:scrapy.http.response.html.HtmlResponse
+    ) -> str:
         brand = cut_spaces(response.xpath(
             '//div[span[contains(., "Производитель")]]'
             '/div/p/text()'
         ).get())
         return brand
 
-    def __get_section(self, response):
+    def __get_section(
+        self, response:scrapy.http.response.html.HtmlResponse
+    ) -> str:
         return response.xpath(
             '//div[@class="breadcrumbs"]'
             '//p[@class="text text--body-sm text--black"]/text()'
         ).getall()[1:-1]
 
-    def __get_price(self, response) -> dict:
+    def __get_price(
+        self, response:scrapy.http.response.html.HtmlResponse
+    ) -> dict[str, float]:
         current_price = response.xpath(
             '//div[@class="button-count button-count--dark product-card__price-button"]'
             '/p/span/text()'
@@ -208,7 +223,9 @@ class LinkSpider(scrapy.Spider):
             sale_tag = f'Скидка {sale_tag_price}'
         )
 
-    def __get_stock(self, response):
+    def __get_stock(
+        self, response:scrapy.http.response.html.HtmlResponse
+    ) -> dict[bool, int]:
         '''Для этой функции нужно было переключить кнопку:
         Нужно было открыть список всех магазинов вместо карты
         и посчитать сумму всех их товаров.'''
@@ -222,7 +239,9 @@ class LinkSpider(scrapy.Spider):
             count = sum(map(lambda x: int(x.split('\xa0')[0]), beer_number))
         )
 
-    def __get_assets(self, response):
+    def __get_assets(
+        self, response:scrapy.http.response.html.HtmlResponse
+    ) -> dict[str, list[str]]:
         '''Достаем всю медиа со страницы.'''
         main_image_asset = response.xpath(
             '//div[@class="product-info__hero-img-wrap"]/img[1]/@src'
@@ -238,7 +257,9 @@ class LinkSpider(scrapy.Spider):
             video = []
         )
 
-    def __get_metadata(self, response):
+    def __get_metadata(
+        self, response:scrapy.http.response.html.HtmlResponse
+    ) -> dict[str, str]:
         volume_meta = cut_spaces(response.xpath(
             '//div[span[contains(., "Объем")]]'
             '/div/p/text()'
@@ -290,7 +311,9 @@ class LinkSpider(scrapy.Spider):
 
 
 
-    async def parse_beer_link(self, response):
+    async def parse_beer_link(
+        self, response:scrapy.http.response.html.HtmlResponse
+    ) -> typing.AsyncGenerator[LinkParserItem]:
         '''Получаем страницу пива
          и начинаем вытаскивать из нее данные.'''
         page = response.meta["playwright_page"]
@@ -317,7 +340,9 @@ class LinkSpider(scrapy.Spider):
 
         yield beer_item
 
-    async def errback(self, failure):
+    async def errback(
+        self, failure:scrapy.http.response.html.HtmlResponse
+    ) -> None:
         '''Закрываем страницу экстренно,  
         чтобы не потерять память.'''
         page = failure.request.meta["playwright_page"]
