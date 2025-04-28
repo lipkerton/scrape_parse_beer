@@ -179,6 +179,7 @@ class LinkSpider(scrapy.Spider):
     def __get_brand(
         self, response:scrapy.http.response.html.HtmlResponse
     ) -> str:
+        '''Получаем бренд пива.'''
         brand = cut_spaces(response.xpath(
             '//div[span[contains(., "Производитель")]]'
             '/div/p/text()'
@@ -188,6 +189,9 @@ class LinkSpider(scrapy.Spider):
     def __get_section(
         self, response:scrapy.http.response.html.HtmlResponse
     ) -> str:
+        '''Получаем секцию, где находится пиво.
+        Я использую срез [1:-1], потому что
+        0 - это "Главная", а последний элемент - имя самого пива.'''
         return response.xpath(
             '//div[@class="breadcrumbs"]'
             '//p[@class="text text--body-sm text--black"]/text()'
@@ -196,6 +200,10 @@ class LinkSpider(scrapy.Spider):
     def __get_price(
         self, response:scrapy.http.response.html.HtmlResponse
     ) -> dict[str, float]:
+        '''Получаем цену из надписей на кнопках.
+        Там есть старая и новая цены + скидка на карточке.
+        Цены превращаем в float + убираем все лишние символы.
+        А скидку форматируем и превращаем в красивую строку.'''
         current_price = response.xpath(
             '//div[@class="button-count button-count--dark product-card__price-button"]'
             '/p/span/text()'
@@ -236,6 +244,9 @@ class LinkSpider(scrapy.Spider):
 
         return dict(
             in_stock = beer_number and True,
+            # эта штука проходи по всем карточкам в списке магазинов,
+            # форматирует строки и превращает количество в int,
+            # а потом все суммируется.
             count = sum(map(lambda x: int(x.split('\xa0')[0]), beer_number))
         )
 
@@ -260,6 +271,7 @@ class LinkSpider(scrapy.Spider):
     def __get_metadata(
         self, response:scrapy.http.response.html.HtmlResponse
     ) -> dict[str, str]:
+        '''Достаем все харакетристики.'''
         volume_meta = cut_spaces(response.xpath(
             '//div[span[contains(., "Объем")]]'
             '/div/p/text()'
